@@ -103,6 +103,7 @@ input.amount{font:30px Georgia,serif;border:none;border-bottom:1px solid var(--l
   <div id="toast" class="toast"></div>
 </div>
 <div id="printArea"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 /* Keuangan Saya v1.1 — 100% offline. Semua data disimpan di perangkat. */
 const KEY = 'keuangan_v11';
@@ -528,17 +529,132 @@ function toast(msg){
 }
 
 /* ---------- Ekspor PDF ---------- */
-function exportPdf(){
+function pdfSafe(t){
+  return String(t == null ? '' : t).replace(/[\u2013\u2014\u2212]/g, '-').replace(/[^\x00-\xFF]/g, '?');
+}
+function printFallback(name){
   const body = reportBody();
+  $('printArea').innerHTML = body;
+  window.print();
+}
+function exportPdf(){
   const name = 'Laporan Keuangan ' + (P.mode === 'harian' ? 'Harian' : P.mode === 'mingguan' ? 'Mingguan' : 'Bulanan') + ' ' + labelOf();
   if (window.Android && typeof window.Android.printHtml === 'function') {
-    const doc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>' + esc(name) +
-      '</title><style>body{margin:0;padding:16px;background:#fff}' + REPORT_CSS + '</style></head><body>' + body + '</body></html>';
+    const doc = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(name) + '</title><style>body{margin:0;padding:16px;background:#fff}' + REPORT_CSS + '</style></head><body>' + reportBody() + '</body></html>';
     window.Android.printHtml(doc, name);
     return;
   }
-  $('printArea').innerHTML = body;
-  window.print();
+  const jsPDF = window.jspdf && window.jspdf.jsPDF;
+  if (!jsPDF) { printFallback(name); return; }
+
+  const doc = new jsPDF({unit:'mm', format:'a4'});
+  const M = 15, CW = 180, BOTTOM = 280;
+  const list = periodTx(), sm = sums(list), saldoAwal = carry();
+  const title = P.mode === 'harian' ? 'Harian' : P.mode === 'mingguan' ? 'Mingguan' : 'Bulanan';
+  let y = M;
+
+  const T = (t, x, yy, size, style, rgb, align) => {
+    doc.setFont('helvetica', style || 'normal');
+    doc.setFontSize(size);
+    const c = rgb || [30,30,30];
+    doc.setTextColor(c[0], c[1], c[2]);
+    doc.text(pdfSafe(t), x, yy, align ? {align: align} : undefined);
+  };
+  const need = h => { if (y + h > BOTTOM) { doc.addPage(); y = M; } };
+  const heading = (t) => {
+    need(24);
+    T(t, M, y, 12, 'bold', [15,61,50]);
+    y += 2.5;
+    doc.setDrawColor(184,137,59); doc.setLineWidth(0.6);
+    doc.line(M, y, M + CW, y);
+    y += 6;
+  };
+  const tableHead = (cols) => {
+    need(7);
+    doc.setFillColor(246,241,227);
+    doc.rect(M, y - 4.5, CW, 6.5, 'F');
+    cols.forEach(c => T(c[0], c[1], y, 9, 'bold', [30,30,30], c[2]));
+    y += 6.5;
+  };
+  const rule = () => { doc.setDrawColor(235,230,216); doc.setLineWidth(0.2); doc.line(M, y, M + CW, y); y += 4.7; };
+
+  // header
+  doc.setFillColor(11,22,19);
+  doc.rect(0, 0, 210, 26, 'F');
+  T('Keuangan Saya', M, 12, 18, 'bold', [243,239,227]);
+  T('Laporan ' + title, M, 20, 10, 'normal', [215,181,109]);
+  T(labelOf(), M + CW, 12, 10, 'normal', [243,239,227], 'right');
+  y = 36;
+
+  // ringkasan 2 x 2
+  const boxes = [
+    ['Saldo awal', saldoAwal, [30,30,30]],
+    ['Total pemasukan', sm.inc, [46,125,91]],
+    ['Total pengeluaran', sm.out, [181,69,46]],
+    ['Saldo akhir', saldoAwal + sm.bal, [30,30,30]]
+  ];
+  boxes.forEach((b, i) => {
+    const bx = M + (i % 2) * 92, by = y + Math.floor(i / 2) * 18;
+    doc.setDrawColor(220,214,200);
+    doc.roundedRect(bx, by, 88, 15, 2, 2, 'S');
+    T(b[0], bx + 4, by + 6, 8, 'normal', [110,110,110]);
+    T(rp(b[1]), bx + 4, by + 12, 12, 'bold', b[2]);
+  });
+  y += 40;
+
+  // pengeluaran & pemasukan per kategori / sub
+  ['expense', 'income'].forEach(kind => {
+    heading(kind === 'expense' ? 'Pengeluaran' : 'Pemasukan');
+    const map = {};
+    list.filter(t => t.kind === kind).forEach(t => {
+      const key = t.cat + '|' + (t.sub || '-');
+      map[key] = map[key] || {cat:t.cat, sub:t.sub || '-', v:0};
+      map[key].v += t.amount;
+    });
+    const arr = Object.values(map).sort((a,b) => b.v - a.v);
+    if (!arr.length) { need(9); T('Tidak ada data.', M, y, 9, 'normal', [110,110,110]); y += 9; return; }
+    tableHead([[ 'Kategori', M + 2 ], [ 'Sub', M + 70 ], [ 'Jumlah', M + CW - 2, 'right' ]]);
+    let total = 0;
+    arr.forEach(r => {
+      need(6.5);
+      total += r.v;
+      T(r.cat, M + 2, y, 9);
+      T(r.sub, M + 70, y, 9);
+      T(rp(r.v), M + CW - 2, y, 9, 'normal', [30,30,30], 'right');
+      y += 1.8; rule();
+    });
+    need(7);
+    T('Total', M + 2, y, 9, 'bold');
+    T(rp(total), M + CW - 2, y, 9, 'bold', [30,30,30], 'right');
+    y += 10;
+  });
+
+  // rincian transaksi
+  heading('Rincian transaksi');
+  if (!list.length) { need(9); T('Tidak ada transaksi.', M, y, 9, 'normal', [110,110,110]); y += 9; }
+  else {
+    tableHead([[ 'Tanggal', M + 2 ], [ 'Kategori / Sub', M + 30 ], [ 'Keterangan', M + 82 ], [ 'Jumlah', M + CW - 2, 'right' ]]);
+    list.slice().reverse().forEach(t => {
+      need(7);
+      const cs = (t.cat + (t.sub ? ' / ' + t.sub : '')).slice(0, 30);
+      const note = (t.note || '').slice(0, 30);
+      const col = t.kind === 'income' ? [46,125,91] : [181,69,46];
+      T(fmtDate(t.date), M + 2, y, 8.5);
+      T(cs, M + 30, y, 8.5);
+      T(note, M + 82, y, 8.5);
+      T((t.kind === 'income' ? '+' : '-') + rp(t.amount), M + CW - 2, y, 8.5, 'normal', col, 'right');
+      y += 1.8; rule();
+    });
+  }
+
+  // footer tiap halaman
+  const pages = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    T('Keuangan Saya v1.1 - ' + new Date().toLocaleString('id-ID') + ' - Hal ' + i + ' dari ' + pages, M, 290, 7, 'normal', [140,140,140]);
+  }
+  doc.save(name + '.pdf');
+  toast('PDF tersimpan');
 }
 
 /* ---------- Event delegation ---------- */
@@ -586,7 +702,7 @@ document.addEventListener('change', e => {
   $('s-rep').innerHTML = periodHTML() +
     `<div class="card"><div class="ctitle">Laporan</div><div id="rep-body"></div></div>
      <div class="card"><button class="save" data-pdf="1">Simpan sebagai PDF</button>
-     <p class="muted">Di jendela cetak, ketuk <b>Tujuan</b> (biasanya tertulis nama printer), lalu pilih <b>Simpan sebagai PDF</b>. Setelah itu ketuk tombol simpan/unduh. Data tetap tersimpan di perangkat.</p></div>`;
+     <p class="muted">Ketuk tombol di atas untuk mengunduh laporan dalam bentuk PDF. Data tetap tersimpan di perangkat.</p></div>`;
   $('s-adv').innerHTML = periodHTML() + `<div id="adv"></div>`;
   $('today').textContent = new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long'});
   resetForm('expense');
