@@ -586,7 +586,7 @@ document.addEventListener('change', e => {
   $('s-rep').innerHTML = periodHTML() +
     `<div class="card"><div class="ctitle">Laporan</div><div id="rep-body"></div></div>
      <div class="card"><button class="save" data-pdf="1">Simpan sebagai PDF</button>
-     <p class="muted">Pada menu cetak, pilih <b>Simpan sebagai PDF</b>. Data tetap tersimpan di perangkat.</p></div>`;
+     <p class="muted">Di jendela cetak, ketuk <b>Tujuan</b> (biasanya tertulis nama printer), lalu pilih <b>Simpan sebagai PDF</b>. Setelah itu ketuk tombol simpan/unduh. Data tetap tersimpan di perangkat.</p></div>`;
   $('s-adv').innerHTML = periodHTML() + `<div id="adv"></div>`;
   $('today').textContent = new Date().toLocaleDateString('id-ID',{weekday:'long',day:'numeric',month:'long'});
   resetForm('expense');
