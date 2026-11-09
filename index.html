@@ -545,7 +545,7 @@ function exportPdf(){
     return;
   }
   const jsPDF = window.jspdf && window.jspdf.jsPDF;
-  if (!jsPDF) { printFallback(name); return; }
+  if (!jsPDF) { toast('Pustaka PDF belum siap. Sambungkan internet, lalu coba lagi.'); return; }
 
   const doc = new jsPDF({unit:'mm', format:'a4'});
   const M = 15, CW = 180, BOTTOM = 280;
